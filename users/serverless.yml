@@ -1,0 +1,168 @@
+org: annulus
+app: users
+service: users
+frameworkVersion: '3'
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  profile: serverless-admin
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 256
+
+  environment:
+    userTable: ${self:provider.stage}-users
+    connectTable: ${self:provider.stage}-websocketUsers
+    uploadBucket: ${self:provider.stage}-annulus-files
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+        - s3:*
+        - ses:*
+      Resource: '*'
+
+  # apiKeys:
+  #   - myFirstAPIKey
+
+
+functions:
+  getUserProfile:
+    handler: userController.getUserProfile
+    events:
+      - http:
+          path: users/{userId}
+          method: get
+          cors: true
+
+  getUsers:
+    handler: userController.getUsers
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+
+  createUserAccount:
+    handler: userController.createUserAccount
+    events:
+      - http:
+          path: createAccount
+          method: post
+          cors: true
+
+  editProfile:
+    handler: userController.editProfile
+    events:
+      - http:
+          path: users/{userId}
+          method: put
+          cors: true
+
+  getPreSignedUrl:
+    handler: fileController.getPreSignedUrl
+    events:
+      - http:
+          path: ''
+          method: get
+          cors: true
+
+  userWebsocket:
+    handler: userWebsocket.userWebsocket
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: $default
+      - websocket:
+          route: message
+
+  userTestWebsocket:
+    handler: userWebsocket.userTestWebsocket
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: $default
+      - websocket:
+          route: message
+
+
+resources:
+  Resources:
+   UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:provider.environment.userTable}
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: location
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: 'locationIndex'
+          KeySchema:
+            - AttributeName: location
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+
+   WebsocketTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:provider.environment.connectTable}
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+
+   UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+     BucketName: ${self:provider.environment.uploadBucket}
+     AccessControl: PublicRead
+
+   UserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:provider.stage}-annulus-auth
+        Schema:
+          - Name: userId
+            AttributeDataType: String
+            Mutable: true
+          - Name: userRole
+            AttributeDataType: String
+            Mutable: true
+   UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: flutter-frontend
+        GenerateSecret: false
+        UserPoolId:
+          Ref: UserPool
